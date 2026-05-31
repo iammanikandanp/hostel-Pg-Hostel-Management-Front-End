@@ -153,6 +153,7 @@ export default function AdminBilling() {
           : r
       ));
       toast.success('Meter reading updated');
+      setShowMeter(false);
 
       // Recalculate existing unpaid bills for this room in current month
       const now = new Date();
@@ -188,6 +189,7 @@ export default function AdminBilling() {
       } else {
         toast(r.data.message, { icon: 'ℹ️' });
       }
+      setShowReminders(false);
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to send'); }
     finally { setSendingReminder(false); }
   };
@@ -203,12 +205,12 @@ export default function AdminBilling() {
   };
 
   const openPayModal = (bill) => {
-    // Pre-select only unpaid components that exist on this bill
     const prev = bill.paidComponents ?? { rent: false, electricity: false, food: false };
+    const bc   = bill.billComponents ?? { rent: true, electricity: true, food: true };
     setPayComponents({
-      rent:        !prev.rent        && bill.rent             > 0,
-      electricity: !prev.electricity && bill.electricityShare > 0,
-      food:        !prev.food        && bill.foodTotal        > 0,
+      rent:        !prev.rent        && bc.rent        && bill.rent             > 0,
+      electricity: !prev.electricity && bc.electricity && bill.electricityShare > 0,
+      food:        !prev.food        && bc.food,
     });
     setPayModal(bill);
   };
@@ -629,9 +631,9 @@ export default function AdminBilling() {
                         EB ₹{b.electricityShare}
                       </span>
                     )}
-                    {b.foodTotal > 0 && (
+                    {b.billComponents?.food && (
                       <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full font-medium">
-                        Food ₹{b.foodTotal}
+                        Food ₹{b.foodTotal ?? 0}
                       </span>
                     )}
                   </div>
@@ -774,9 +776,9 @@ export default function AdminBilling() {
                   EB ₹{b.electricityShare}
                 </span>
               )}
-              {b.foodTotal > 0 && (
+              {b.billComponents?.food && (
                 <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 text-xs px-2 py-0.5 rounded-full font-medium">
-                  Food ₹{b.foodTotal}
+                  Food ₹{b.foodTotal ?? 0}
                 </span>
               )}
             </div>
@@ -815,11 +817,12 @@ export default function AdminBilling() {
       {/* ── Mark Paid Modal ── */}
       {payModal && (() => {
         const pc = payModal.paidComponents ?? { rent: false, electricity: false, food: false };
+        const bc = payModal.billComponents ?? { rent: true, electricity: true, food: true };
         const items = [
-          { key: 'rent',        label: 'Rent',            amount: payModal.rent,             alreadyPaid: pc.rent        },
-          { key: 'electricity', label: 'Electricity (EB)', amount: payModal.electricityShare, alreadyPaid: pc.electricity },
-          { key: 'food',        label: 'Food',             amount: payModal.foodTotal,         alreadyPaid: pc.food        },
-        ].filter(i => i.amount > 0);
+          { key: 'rent',        label: 'Rent',            amount: payModal.rent,               alreadyPaid: pc.rent,        enabled: bc.rent        },
+          { key: 'electricity', label: 'Electricity (EB)', amount: payModal.electricityShare,  alreadyPaid: pc.electricity, enabled: bc.electricity },
+          { key: 'food',        label: 'Food',             amount: payModal.foodTotal ?? 0,    alreadyPaid: pc.food,        enabled: bc.food        },
+        ].filter(i => i.enabled);
 
         const payingTotal = items.reduce((sum, i) => {
           if (i.alreadyPaid) return sum;

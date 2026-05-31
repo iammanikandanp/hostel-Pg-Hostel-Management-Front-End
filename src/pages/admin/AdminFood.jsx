@@ -1,9 +1,93 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { Coffee, Sun, Moon, X, Users, ChevronRight, CalendarDays, BarChart3, ChefHat, UtensilsCrossed, ChevronLeft, Save, Edit3 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import hstApi from '../../api/hstAxios';
 import { PageLoader } from '../../components/Spinner';
+
+// ── Food suggestion helpers (localStorage) ────────────────────────────────────
+
+const LS_KEY = meal => `hst_food_suggestions_${meal}`;
+
+const DEFAULT_SUGGESTIONS = {
+  breakfast: ['Idly', 'Dosa', 'Poori', 'Chapati', 'Pongal', 'Upma', 'Parotta', 'Rava Dosa', 'Vada', 'Sambar', 'Chutney', 'Egg Curry', 'Omelette', 'Bread', 'Puttu'],
+  lunch:     ['White Rice', 'Sambar', 'Rasam', 'Curd', 'Papad', 'Pickle', 'Dal', 'Mixed Veg', 'Fish Curry', 'Chicken Curry', 'Buttermilk', 'Kootu', 'Poriyal', 'Appalam'],
+  dinner:    ['Chapati', 'Parotta', 'Rice', 'Dal', 'Egg Curry', 'Chicken Curry', 'Veg Kurma', 'Sambar', 'Rasam', 'Curd Rice', 'Idly', 'Dosa', 'Fried Rice', 'Noodles'],
+};
+
+function getSuggestions(meal) {
+  try {
+    const stored = localStorage.getItem(LS_KEY(meal));
+    if (stored) return JSON.parse(stored);
+    localStorage.setItem(LS_KEY(meal), JSON.stringify(DEFAULT_SUGGESTIONS[meal]));
+    return DEFAULT_SUGGESTIONS[meal];
+  } catch { return DEFAULT_SUGGESTIONS[meal] || []; }
+}
+
+function saveSuggestions(meal, items) {
+  const existing = getSuggestions(meal);
+  const merged = [...new Set([...existing, ...items.map(s => s.trim()).filter(Boolean)])];
+  localStorage.setItem(LS_KEY(meal), JSON.stringify(merged));
+}
+
+function getActiveToken(value) {
+  const parts = value.split(',');
+  return parts[parts.length - 1].trim().toLowerCase();
+}
+
+function MealInput({ meal, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [suggestions] = useState(() => getSuggestions(meal));
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    function handler(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const token = getActiveToken(value);
+  const alreadyUsed = value.split(',').map(s => s.trim().toLowerCase());
+  const filtered = suggestions.filter(s =>
+    !alreadyUsed.includes(s.toLowerCase()) &&
+    (token.length === 0 || s.toLowerCase().includes(token))
+  );
+
+  function pickSuggestion(item) {
+    const parts = value.split(',');
+    parts[parts.length - 1] = ' ' + item;
+    onChange(parts.join(',').replace(/^,\s*/, ''));
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        placeholder="e.g. Idly, Sambar, Chutney"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden max-h-40 overflow-y-auto">
+          {filtered.map(item => (
+            <li
+              key={item}
+              onMouseDown={e => { e.preventDefault(); pickSuggestion(item); }}
+              className="px-3 py-2 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer"
+            >
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -70,6 +154,10 @@ function EditDayModal({ weekStart, dayIndex, dayName, existing, onClose }) {
   const mutation = useMutation({
     mutationFn: () => hstApi.patch(`/food-menu/day/${dateStr}`, form),
     onSuccess: () => {
+      for (const meal of MEALS) {
+        const items = form[meal].items.split(',').map(s => s.trim()).filter(Boolean);
+        if (items.length) saveSuggestions(meal, items);
+      }
       toast.success('Menu saved');
       qc.invalidateQueries({ queryKey: ['food-menu'] });
       qc.invalidateQueries({ queryKey: ['today-menu'] });
@@ -91,11 +179,20 @@ function EditDayModal({ weekStart, dayIndex, dayName, existing, onClose }) {
         <div className="p-6 space-y-5 overflow-y-auto max-h-[55vh]">
           {MEALS.map(meal => (
             <div key={meal} className={`rounded-2xl border p-4 space-y-3 ${MEAL_META[meal].editColor}`}>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{MEAL_META[meal].label}</p>
-              <input type="text" placeholder="e.g. Idli, Sambar, Chutney"
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-600">{MEAL_META[meal].label}</p>
+                {form[meal].items && (
+                  <button type="button" onClick={() => setForm(f => ({ ...f, [meal]: { ...f[meal], items: '' } }))}
+                    className="text-[10px] text-slate-400 hover:text-red-400 transition-colors">
+                    ✕ clear
+                  </button>
+                )}
+              </div>
+              <MealInput
+                meal={meal}
                 value={form[meal].items}
-                onChange={e => setForm(f => ({ ...f, [meal]: { ...f[meal], items: e.target.value } }))}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white" />
+                onChange={val => setForm(f => ({ ...f, [meal]: { ...f[meal], items: val } }))}
+              />
               <input type="text" placeholder="Optional note (e.g. vegetarian only)"
                 value={form[meal].note}
                 onChange={e => setForm(f => ({ ...f, [meal]: { ...f[meal], note: e.target.value } }))}
